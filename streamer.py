@@ -23,7 +23,7 @@ class Streamer:
             remaining_bytes = remaining_bytes[1472:]
             self.socket.sendto(sending_bytes, (self.dst_ip, self.dst_port))
         self.socket.sendto(remaining_bytes, (self.dst_ip, self.dst_port))
-        
+
         # for now I'm just sending the raw application-level data in one UDP payload
         #self.socket.sendto(data_bytes, (self.dst_ip, self.dst_port))
 
