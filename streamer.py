@@ -24,17 +24,20 @@ class Streamer:
 
     def listener(self) -> None:
         # While listening
+        print('Starting listener')
         while not self.closed:
             # Try to get packets and add them to the buffer
             try:
                 packet, addr = self.socket.recvfrom()
+            # Print out if something goes wrong
+            except Exception as e:
+                print("Listener died: " + str(e))
+            else:
                 header, data = packet.split(b' ', 1)
                 # This is where we can decode the header accoriding to how we set it in the sending method above
                 # This buffer is made for re-orderign the data (value) given its sequence numbers (keys) as a dict
                 self.buffer[int(header.decode())] = data
-            # Print out if something goes wrong
-            except Exception as e:
-                print("Listener died: " + str(e))
+
         print("Listener closing...")
 
     def send(self, data_bytes: bytes) -> None:
@@ -97,5 +100,6 @@ class Streamer:
         # Redundency for setting the data to send to be clear
         self.data_to_send.clear()
         # Close the listener
-        self.close = True
+        self.closed = True
+        self.socket.stoprecv()
         pass
