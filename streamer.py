@@ -2,6 +2,7 @@
 from lossy_socket import LossyUDP
 # do not import anything else from socket except INADDR_ANY
 from socket import INADDR_ANY
+from concurrent import futures
 
 class Streamer:
     def __init__(self, dst_ip, dst_port,
@@ -16,6 +17,24 @@ class Streamer:
         self.data_to_send = []
         self.remainder = ""
         self.buffer = {}
+        self.closed = False
+
+        executor = futures.ThreadPoolExecutor(max_workers=1)
+        executor.submit(self.listener)
+
+    def listener(self) -> None:
+        # While listening
+        while not self.closed:
+            # Try to get packets and add them to the buffer
+            try:
+                packet, addr = self.socket.recvfrom()
+                header, data = packet.split(b' ', 1)
+                # This is where we can decode the header accoriding to how we set it in the sending method above
+                # This buffer is made for re-orderign the data (value) given its sequence numbers (keys) as a dict
+                self.buffer[int(header.decode())] = data
+            # Print out if something goes wrong
+            except Exception as e:
+                print("Listener died: " + str(e))
 
     def send(self, data_bytes: bytes) -> None:
         """Note that data_bytes can be larger than one packet."""
@@ -56,15 +75,14 @@ class Streamer:
         """Blocks (waits) if no data is ready to be read from the connection."""
         # your code goes here!  The code below should be changed!
 
-        while self.currentIndex not in self.buffer:
-            packet, addr = self.socket.recvfrom()
-            header, data = packet.split(b' ', 1)
-            # This is where we can decode the header accoriding to how we set it in the sending method above
-            # This buffer is made for re-orderign the data (value) given its sequence numbers (keys) as a dict
-            self.buffer[int(header.decode())] = data
-
-        full_data = self.buffer.pop(self.currentIndex)
-        self.currentIndex += 1
+        # Constantly check to see if the seq num is in the buffer
+        while True:
+            # (sidenote: this is where we can use timeout)
+            if self.currentIndex in self.buffer:
+                # If it is, pop it out, get the next seq num, and break
+                full_data = self.buffer.pop(self.currentIndex)
+                self.currentIndex += 1
+                break
 
         return full_data
 
@@ -77,4 +95,6 @@ class Streamer:
         self.currentIndex = 0
         # Redundency for setting the data to send to be clear
         self.data_to_send.clear()
+        # Close the listener
+        self.close = True
         pass
