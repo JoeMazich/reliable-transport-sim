@@ -3,6 +3,7 @@ from lossy_socket import LossyUDP
 # do not import anything else from socket except INADDR_ANY
 from socket import INADDR_ANY
 from concurrent import futures
+from time import sleep
 
 class Streamer:
     def __init__(self, dst_ip, dst_port,
@@ -18,6 +19,7 @@ class Streamer:
         self.remainder = ""
         self.buffer = {}
         self.closed = False
+        self.ACK = False
 
         executor = futures.ThreadPoolExecutor(max_workers=1)
         executor.submit(self.listener)
@@ -33,12 +35,16 @@ class Streamer:
             except Exception as e:
                 print("Listener died: " + str(e))
             else:
-                header, data = packet.split(b' ', 1)
-                # This is where we can decode the header accoriding to how we set it in the sending method above
-                # This buffer is made for re-orderign the data (value) given its sequence numbers (keys) as a dict
-                self.buffer[int(header.decode())] = data
+                header, data = packet.split(b'~', 1)
 
-        print("Listener closing...")
+                # This is where we can decode the header accoriding to how we set it in the sending method
+                header = header.decode()
+                packet_type, seq_num = header.split(' ')
+                # Look at what tpye of packet it is and do things accordingly
+                if packet_type == 'DAT':
+                    self.buffer[int(seq_num)] = data
+                elif packet_type == 'ACK':
+                    self.ACK = True
 
     def send(self, data_bytes: bytes) -> None:
         """Note that data_bytes can be larger than one packet."""
@@ -47,6 +53,7 @@ class Streamer:
         # Set some max values for things (in bytes)
         max_header_length = 11
         max_packet_length = 1472
+
         data_length = max_packet_length - max_header_length
         # Rename data_bytes for easy of use (easier to read)
         remaining_bytes = data_bytes
@@ -62,7 +69,7 @@ class Streamer:
         for data in self.data_to_send:
             # Create the header, this is where we can add more info about the packet
             # (BE MINDFUL OF ITS SIZE AND ADJUST max_header_length ACCORDINGLY)
-            header = (str(self.currentIndex) + ' ').encode()
+            header = ('DAT ' + str(self.currentIndex) + '~').encode()
             self.currentIndex += 1
             # Create the actual packet to send
             packet = header + data
@@ -75,19 +82,32 @@ class Streamer:
         # so you don't send the same packets again
         self.data_to_send.clear()
 
+        print('waiting for ACK')
+        while not self.ACK:
+            sleep(0.01)
+        self.ACK = False
+
+
     def recv(self) -> bytes:
         """Blocks (waits) if no data is ready to be read from the connection."""
         # your code goes here!  The code below should be changed!
 
+        print('looking in buffer')
         # Constantly check to see if the seq num is in the buffer
         while True:
+
             # (sidenote: this is where we can use timeout)
             if self.currentIndex in self.buffer:
                 # If it is, pop it out, get the next seq num, and break
                 full_data = self.buffer.pop(self.currentIndex)
                 self.currentIndex += 1
                 break
-
+        # Send an ACK that we got the next packet
+        # right now, they are sending in order technically, so...
+        # Later on, might be good idea to send the ack number instead of just 0
+        acknowledgement = ('ACK 0~').encode()
+        self.socket.sendto(acknowledgement, (self.dst_ip, self.dst_port))
+        print('sent ack')
         return full_data
 
     def close(self) -> None:
