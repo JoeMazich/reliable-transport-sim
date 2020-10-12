@@ -35,6 +35,7 @@ class Streamer:
             # Print out if something goes wrong
             except Exception as e:
                 print("Listener died: " + str(e))
+        print("Listener closing...")
 
     def send(self, data_bytes: bytes) -> None:
         """Note that data_bytes can be larger than one packet."""
