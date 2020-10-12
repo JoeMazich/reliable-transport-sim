@@ -35,15 +35,19 @@ class Streamer:
             except Exception as e:
                 print("Listener died: " + str(e))
             else:
+                # Split off the header from the body
                 header, data = packet.split(b'~', 1)
 
                 # This is where we can decode the header accoriding to how we set it in the sending method
                 header = header.decode()
                 packet_type, seq_num = header.split(' ')
+
                 # Look at what tpye of packet it is and do things accordingly
                 if packet_type == 'DAT':
+                    # If it is a DATa pack, put that data into the buffer to read later (SEQ# for reordering as key)
                     self.buffer[int(seq_num)] = data
                 elif packet_type == 'ACK':
+                    # If it is an ACKnlodgement pack, let the main thread know by setting self.ACK to True
                     self.ACK = True
 
     def send(self, data_bytes: bytes) -> None:
@@ -63,8 +67,10 @@ class Streamer:
             self.data_to_send.append(remaining_bytes[0:data_length])
             # Find how many remaining bytes you have
             remaining_bytes = remaining_bytes[data_length:]
+
         # Append the last of the bytes that didnt make the cut
         self.data_to_send.append(remaining_bytes)
+
         # Sending the data
         for data in self.data_to_send:
             # Create the header, this is where we can add more info about the packet
@@ -78,36 +84,53 @@ class Streamer:
             assert (len(packet) <= max_packet_length)
             # Send the packet
             self.socket.sendto(packet, (self.dst_ip, self.dst_port))
+
         # Clear out the data_to_send list for later use - for when you send another packet
         # so you don't send the same packets again
         self.data_to_send.clear()
 
-        print('waiting for ACK')
-        while not self.ACK:
+        # Wait for acknowledgement - gotta pass through the sending bytes just in case of timeout
+        # could fix that by defining another function other than send that actually sends the data
+        # but then you gotta be more carefult about the data_to_send and the function names will be really confusing
+        self.wait_for_ACK(data_bytes)
+
+
+    def wait_for_ACK(self, data_bytes: bytes) -> None:
+        seconds = 0.
+        # Wait for an ACK - it is found by the listener and stops there
+        # Thats why it looks like nothing is happening here
+        while (not self.ACK and seconds <= 0.25):
             sleep(0.01)
-        self.ACK = False
+            seconds += 0.01
+        if seconds > 0.25:
+            self.currentIndex -= 1
+            self.send(data_bytes)
+        else:
+            self.ACK = False
 
 
     def recv(self) -> bytes:
         """Blocks (waits) if no data is ready to be read from the connection."""
         # your code goes here!  The code below should be changed!
 
-        print('looking in buffer')
         # Constantly check to see if the seq num is in the buffer
         while True:
-
-            # (sidenote: this is where we can use timeout)
             if self.currentIndex in self.buffer:
                 # If it is, pop it out, get the next seq num, and break
                 full_data = self.buffer.pop(self.currentIndex)
+
                 self.currentIndex += 1
                 break
+
+        temp = {key:val for key, val in self.buffer.items() if key >= self.currentIndex}
+        self.buffer = temp
+
+        print(self.buffer)
         # Send an ACK that we got the next packet
-        # right now, they are sending in order technically, so...
+        # right now, they are technically sending in order, so...
         # Later on, might be good idea to send the ack number instead of just 0
         acknowledgement = ('ACK 0~').encode()
         self.socket.sendto(acknowledgement, (self.dst_ip, self.dst_port))
-        print('sent ack')
         return full_data
 
     def close(self) -> None:
@@ -117,9 +140,12 @@ class Streamer:
 
         # Reset the index for sequencing
         self.currentIndex = 0
-        # Redundency for setting the data to send to be clear
-        self.data_to_send.clear()
-        # Close the listener
+        # Close the listener, some of this might be transfered to the listener function itself later
         self.closed = True
         self.socket.stoprecv()
+
+        # Redundency for setting the data to send to be clear
+        self.data_to_send.clear()
+        # Ensure that self.ACK is False for next connection
+        self.ACK = False
         pass
