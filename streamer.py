@@ -20,6 +20,7 @@ class Streamer:
         self.buffer = {}
         self.closed = False
         self.ACK = False
+        self.FIN = False
 
         executor = futures.ThreadPoolExecutor(max_workers=1)
         executor.submit(self.listener)
@@ -45,20 +46,22 @@ class Streamer:
                 # Look at what tpye of packet it is and do things accordingly
                 if packet_type == 'DAT':
                     # If it is a DATa pack
-                    # Check to see if we already got the packet
-                    if int(seq_num) < self.currentIndex:
-                        # if we did, send another acknowledgement
-                        acknowledgement = ('ACK ' + str(self.currentIndex) + '~').encode()
-                        self.socket.sendto(acknowledgement, (self.dst_ip, self.dst_port))
-                    else:
-                        # If we didnt, add the data to the buffer
+                    # Send an ACK that we got the packet
+                    acknowledgement = ('ACK ' + str(self.currentIndex) + '~').encode()
+                    self.socket.sendto(acknowledgement, (self.dst_ip, self.dst_port))
+                    # Check to see if we should save the data (we didn't get the packet before) or not (we got it before and this is a dup)
+                    if int(seq_num) >= self.currentIndex:
                         self.buffer[int(seq_num)] = data
+
                 elif packet_type == 'ACK':
                     # If it is an ACKnlodgement pack
                     # Check the ACK number, if it is bigger than or equal to the one we are waiting on...
                     if self.currentIndex <= int(seq_num):
                         # We are no longer waiting and we are good to send more packets
                         self.ACK = True
+
+                elif packet_type == 'FIN':
+                    self.FIN = True
 
     def send(self, data_bytes: bytes) -> None:
         """Note that data_bytes can be larger than one packet."""
@@ -145,11 +148,19 @@ class Streamer:
            the necessary ACKs and retransmissions"""
         # your code goes here, especially after you add ACKs and retransmissions.
 
+        finish = ('FIN ' + str(self.currentIndex) + '~').encode()
+        self.socket.sendto(finish, (self.dst_ip, self.dst_port))
+
+        while not self.FIN:
+            sleep(0.01)
+        print('Finished stream')
         # Reset the index for sequencing
         self.currentIndex = 0
         # Close the listener, some of this might be transfered to the listener function itself later
         self.closed = True
         self.socket.stoprecv()
+        # Set Fin back to false just incase you want to use the same stream later
+        self.FIN = False
 
         # Redundency for setting the data to send to be clear
         self.data_to_send.clear()
