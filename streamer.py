@@ -44,11 +44,21 @@ class Streamer:
 
                 # Look at what tpye of packet it is and do things accordingly
                 if packet_type == 'DAT':
-                    # If it is a DATa pack, put that data into the buffer to read later (SEQ# for reordering as key)
-                    self.buffer[int(seq_num)] = data
+                    # If it is a DATa pack
+                    # Check to see if we already got the packet
+                    if int(seq_num) < self.currentIndex:
+                        # if we did, send another acknowledgement
+                        acknowledgement = ('ACK ' + str(self.currentIndex) + '~').encode()
+                        self.socket.sendto(acknowledgement, (self.dst_ip, self.dst_port))
+                    else:
+                        # If we didnt, add the data to the buffer
+                        self.buffer[int(seq_num)] = data
                 elif packet_type == 'ACK':
-                    # If it is an ACKnlodgement pack, let the main thread know by setting self.ACK to True
-                    self.ACK = True
+                    # If it is an ACKnlodgement pack
+                    # Check the ACK number, if it is bigger than or equal to the one we are waiting on...
+                    if self.currentIndex <= int(seq_num):
+                        # We are no longer waiting and we are good to send more packets
+                        self.ACK = True
 
     def send(self, data_bytes: bytes) -> None:
         """Note that data_bytes can be larger than one packet."""
@@ -118,18 +128,15 @@ class Streamer:
             if self.currentIndex in self.buffer:
                 # If it is, pop it out, get the next seq num, and break
                 full_data = self.buffer.pop(self.currentIndex)
-
                 self.currentIndex += 1
                 break
 
         temp = {key:val for key, val in self.buffer.items() if key >= self.currentIndex}
         self.buffer = temp
-
-        print(self.buffer)
         # Send an ACK that we got the next packet
         # right now, they are technically sending in order, so...
         # Later on, might be good idea to send the ack number instead of just 0
-        acknowledgement = ('ACK 0~').encode()
+        acknowledgement = ('ACK ' + str(self.currentIndex) + '~').encode()
         self.socket.sendto(acknowledgement, (self.dst_ip, self.dst_port))
         return full_data
 
