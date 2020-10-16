@@ -41,7 +41,7 @@ def host1(listen_port, remote_port):
     while i < NUMS:
         buf += ("%d " % i)
         if len(buf) > 12345 or i == NUMS-1:
-            print("sending {%s}" % buf)
+            print("sending from host 1 {%s}" % buf)
             s.send(buf.encode('utf-8'))
             buf = ""
         i += 1
@@ -55,7 +55,7 @@ def host2(listen_port, remote_port):
     # send small pieces of data
     for i in range(NUMS):
         buf = ("%d " % i)
-        print("sending {%s}" % buf)
+        print("sending from host 2 {%s}" % buf)
         s.send(buf.encode('utf-8'))
     receive(s)
     s.close()

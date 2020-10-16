@@ -42,6 +42,7 @@ class Streamer:
                 # This is where we can decode the header accoriding to how we set it in the sending method
                 header = header.decode()
                 packet_type, seq_num = header.split(' ')
+                print("HEADER: ", header)
 
                 # Look at what tpye of packet it is and do things accordingly
                 if packet_type == 'DAT':
@@ -56,9 +57,13 @@ class Streamer:
                 elif packet_type == 'ACK':
                     # If it is an ACKnlodgement pack
                     # Check the ACK number, if it is bigger than or equal to the one we are waiting on...
-                    if self.currentIndex <= int(seq_num):
+                    #print("CURRENT INDEX: ", self.currentIndex, "   SEQ_NUM: ", seq_num)
+                    if self.currentIndex - 1 <= int(seq_num):
                         # We are no longer waiting and we are good to send more packets
                         self.ACK = True
+                    else:
+                        print("CURRENT INDEX: ", self.currentIndex, "   SEQ_NUM: ", seq_num)
+                        print("SENDING AGAIN")
 
                 elif packet_type == 'FIN':
                     self.FIN = True
@@ -86,29 +91,33 @@ class Streamer:
 
         # Sending the data
         for data in self.data_to_send:
-            # Create the header, this is where we can add more info about the packet
-            # (BE MINDFUL OF ITS SIZE AND ADJUST max_header_length ACCORDINGLY)
-            header = ('DAT ' + str(self.currentIndex) + '~').encode()
-            self.currentIndex += 1
-            # Create the actual packet to send
-            packet = header + data
-            # Make sure everything is not TOO big (hopefully not too small either, want it to be juuust right)
-            assert (len(header) <= max_header_length)
-            assert (len(packet) <= max_packet_length)
-            # Send the packet
-            self.socket.sendto(packet, (self.dst_ip, self.dst_port))
+            self.send_one(data)
 
         # Clear out the data_to_send list for later use - for when you send another packet
         # so you don't send the same packets again
         self.data_to_send.clear()
 
+    def send_one(self, data):
+        max_header_length = 11
+        max_packet_length = 1472
+        # Create the header, this is where we can add more info about the packet
+        # (BE MINDFUL OF ITS SIZE AND ADJUST max_header_length ACCORDINGLY)
+        header = ('DAT ' + str(self.currentIndex) + '~').encode()
+        self.currentIndex += 1
+        # Create the actual packet to send
+        packet = header + data
+        # Make sure everything is not TOO big (hopefully not too small either, want it to be juuust right)
+        assert (len(header) <= max_header_length)
+        assert (len(packet) <= max_packet_length)
+        # Send the packet
+        print("sending {%s}" % packet)
+        self.socket.sendto(packet, (self.dst_ip, self.dst_port))
         # Wait for acknowledgement - gotta pass through the sending bytes just in case of timeout
         # could fix that by defining another function other than send that actually sends the data
         # but then you gotta be more carefult about the data_to_send and the function names will be really confusing
-        self.wait_for_ACK(data_bytes)
+        self.wait_for_ACK(data)
 
-
-    def wait_for_ACK(self, data_bytes: bytes) -> None:
+    def wait_for_ACK(self, data) -> None:
         seconds = 0.
         # Wait for an ACK - it is found by the listener and stops there
         # Thats why it looks like nothing is happening here
@@ -117,7 +126,8 @@ class Streamer:
             seconds += 0.01
         if seconds > 0.25:
             self.currentIndex -= 1
-            self.send(data_bytes)
+            print("TIMED OUT SO SEND AGAIN")
+            self.send_one(data)
         else:
             self.ACK = False
 
@@ -139,8 +149,8 @@ class Streamer:
         # Send an ACK that we got the next packet
         # right now, they are technically sending in order, so...
         # Later on, might be good idea to send the ack number instead of just 0
-        acknowledgement = ('ACK ' + str(self.currentIndex) + '~').encode()
-        self.socket.sendto(acknowledgement, (self.dst_ip, self.dst_port))
+        #acknowledgement = ('ACK ' + str(self.currentIndex) + '~').encode()
+        #self.socket.sendto(acknowledgement, (self.dst_ip, self.dst_port))
         return full_data
 
     def close(self) -> None:
