@@ -25,6 +25,7 @@ class Streamer:
 
         self.listening = True
         self.FIN = False
+        self.FINACK = False
 
         self.sending = False
         self.receiving = False
@@ -60,8 +61,7 @@ class Streamer:
             header = ('DAT ' + str(self.current_seq) + '~').encode()
             packet = header + data
 
-            current_milli_time = lambda: int(round(time.time() * 1000))
-            print("Sent: %s at %s" % (packet, current_milli_time()))
+            print("Sent: %s at %s" % (packet, self.millis()))
 
             self.socket.sendto(packet, (self.dst_ip, self.dst_port))
             self.wait_for_ACK(self.current_seq)
@@ -74,8 +74,7 @@ class Streamer:
 
         packet = header + data
 
-        current_milli_time = lambda: int(round(time.time() * 1000))
-        print("Resent: %s at %s" % (packet, current_milli_time()))
+        print("Resent: %s at %s" % (packet, self.millis()))
 
         self.socket.sendto(packet, (self.dst_ip, self.dst_port))
 
@@ -83,15 +82,18 @@ class Streamer:
 
     def send_ACK(self) -> None:
         acknowledgement = ('ACK ' + str(self.current_seq) + '~').encode()
-        current_milli_time = lambda: int(round(time.time() * 1000))
-        print("Sent: %s at %s" % (acknowledgement, current_milli_time()))
+        print("Sent: %s at %s" % (acknowledgement, self.millis()))
         self.socket.sendto(acknowledgement, (self.dst_ip, self.dst_port))
 
     def send_FIN(self) -> None:
         finish = ('FIN ' + str(self.current_seq) + '~').encode()
-        current_milli_time = lambda: int(round(time.time() * 1000))
-        print("Sent: %s at %s" % (finish, current_milli_time()))
+        print("Sent: %s at %s" % (finish, self.millis()))
         self.socket.sendto(finish, (self.dst_ip, self.dst_port))
+
+    def send_FINACK(self) -> None:
+        finack = ('FINACK ' + str(self.current_seq) + '~').encode()
+        print("Sent: %s at %s" % (finack, self.millis()))
+        self.socket.sendto(finack, (self.dst_ip, self.dst_port))
 
 
     def recv(self) -> bytes:
@@ -116,8 +118,7 @@ class Streamer:
             if got_data:
                 break
 
-        current_milli_time = lambda: int(round(time.time() * 1000))
-        print("Retrieved: %s at %s" % (data, current_milli_time()))
+        print("Retrieved: %s at %s" % (data, self.millis()))
 
         self.receiving = False
 
@@ -133,8 +134,7 @@ class Streamer:
                 print("Listener died: " + str(e))
 
             else:
-                current_milli_time = lambda: int(round(time.time() * 1000))
-                print("Got: %s at %s" % (packet, current_milli_time()))
+                print("Got: %s at %s" % (packet, self.millis()))
                 header, data = packet.split(b'~', 1)
                 header = header.decode()
                 packet_type, seq_num = header.split(' ')
@@ -148,6 +148,9 @@ class Streamer:
                         self.last_ACK = seq_num
                 elif packet_type == 'FIN':
                     self.FIN = True
+                elif packet_type == 'FINACK':
+                    self.FIN = True
+                    self.FINACK = True
 
 
     def stop_listening(self) -> None:
@@ -157,14 +160,37 @@ class Streamer:
     def close(self) -> None:
 
         self.send_FIN()
-
         miliseconds = 0
         while not self.FIN:
+            if (miliseconds % 50) == 49:
+                self.send_FIN()
             sleep(0.01)
+            miliseconds += 1
+
+        self.send_FINACK()
+        miliseconds = 0
+        while not self.FINACK:
+            if (miliseconds % 50) == 49:
+                self.send_FINACK()
+            if miliseconds >= 500:
+                break
+            sleep(0.01)
+            miliseconds += 1
+
 
         sleep(1)
 
         self.stop_listening()
+
+        self.data_to_send = {} # Buffer to send items
+        self.buffer = {} # Buffer for recieved items
+
+        self.listening = True
+        self.FIN = False
+        self.FINACK = False
+
+        self.sending = False
+        self.receiving = False
 
         self.current_seq = -1 # The current packetnum to be sent and to be expected
         self.last_ACK = -1 # The last packetnum that was acked
@@ -191,6 +217,9 @@ class Streamer:
 
     def break_string(self, string: bytes, length: int) -> list:
         return(string[0+i:length+i] for i in range(0, len(string), length))
+
+    def millis(self):
+        return int(round(time.time() * 1000))
 
 
 if __name__ == '__main__':
