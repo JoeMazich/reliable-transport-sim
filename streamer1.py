@@ -40,7 +40,7 @@ class Streamer:
         self.sending = True
 
         header_length = 10
-        max_packet_length = 50
+        max_packet_length = 1472
 
         data_length = max_packet_length - header_length
 
@@ -110,9 +110,9 @@ class Streamer:
                     del self.buffer[seq_num]
                 elif int(seq_num) == self.current_seq + 1:
                     data = self.buffer.pop(self.current_seq + 1)
-                    print('Incrimented the recv: %s, %s' % (self.current_seq, self.current_seq + 1))
                     self.current_seq += 1
                     got_data = True
+
             if got_data:
                 break
 
@@ -158,10 +158,17 @@ class Streamer:
 
         self.send_FIN()
 
+        miliseconds = 0
         while not self.FIN:
             sleep(0.01)
 
+        sleep(1)
+
         self.stop_listening()
+
+        self.current_seq = -1 # The current packetnum to be sent and to be expected
+        self.last_ACK = -1 # The last packetnum that was acked
+        self.sender_index = 0 # For labeling the packets to be sent
 
 
     def parse_packet(self, packet: bytes) -> None:
