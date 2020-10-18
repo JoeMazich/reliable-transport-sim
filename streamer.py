@@ -159,6 +159,8 @@ class Streamer:
 
     def close(self) -> None:
 
+        sleep(1)
+
         self.send_FIN()
         miliseconds = 0
         while not self.FIN:
@@ -167,15 +169,15 @@ class Streamer:
             sleep(0.01)
             miliseconds += 1
 
-        self.send_FINACK()
-        miliseconds = 0
-        while not self.FINACK:
-            if (miliseconds % 50) == 49:
-                self.send_FINACK()
-            if miliseconds >= 500:
-                break
-            sleep(0.01)
-            miliseconds += 1
+        #self.send_FINACK()
+        #miliseconds = 0
+        #while not self.FINACK:
+         #   if (miliseconds % 50) == 49:
+          #      self.send_FINACK()
+           # if miliseconds >= 500:
+           #     break
+           # sleep(0.01)
+           # miliseconds += 1
 
 
         sleep(1)
