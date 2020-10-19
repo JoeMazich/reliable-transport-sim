@@ -159,13 +159,19 @@ class Streamer:
 
     def close(self) -> None:
 
-        sleep(1)
+        print(self.sending)
+        print(self.receiving)
+
+        while self.sending or self.receiving:
+            sleep(0.01)
 
         self.send_FIN()
         miliseconds = 0
         while not self.FIN:
             if (miliseconds % 50) == 49:
                 self.send_FIN()
+            if miliseconds >= 500:
+                 break
             sleep(0.01)
             miliseconds += 1
 
