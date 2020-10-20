@@ -2,7 +2,7 @@ from streamer import Streamer
 import sys
 import lossy_socket
 
-NUMS=100
+NUMS=1000
 
 
 def receive(s):
@@ -17,7 +17,7 @@ def receive(s):
                 # there could be a "" at the start or the end, if a space is there
                 continue
             if int(t) == expected:
-                #print("got %d!" % expected)
+                print("got %d!" % expected)
                 expected += 1
                 str_buf = ''
             elif int(t) > expected:
@@ -41,7 +41,7 @@ def host1(listen_port, remote_port):
     while i < NUMS:
         buf += ("%d " % i)
         if len(buf) > 12345 or i == NUMS-1:
-            #print("sending from host 1 {%s}" % buf)
+            print("sending from host 1 {%s}" % buf)
             s.send(buf.encode('utf-8'))
             buf = ""
         i += 1
@@ -55,7 +55,7 @@ def host2(listen_port, remote_port):
     # send small pieces of data
     for i in range(NUMS):
         buf = ("%d " % i)
-        #print("sending from host 2 {%s}" % buf)
+        print("sending from host 2 {%s}" % buf)
         s.send(buf.encode('utf-8'))
     receive(s)
     s.close()
