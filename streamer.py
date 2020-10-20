@@ -276,6 +276,8 @@ class Streamer:
 
         self.stop_listening()
 
+        #sleep(2)
+
         self.data_to_send = {} # Buffer to send items
         self.buffer = {} # Buffer for recieved items
 
