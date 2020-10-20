@@ -233,9 +233,10 @@ class Streamer:
                                 self.last_ACK = seq_num
 
                             else:
-                                self.triple_ACK += 1
+                                self.resend(seq_num + 1)
+                                '''self.triple_ACK += 1
                                 if self.triple_ACK >= 3:
-                                    self.resend(seq_num + 1)
+                                    self.resend(seq_num + 1)'''
 
                         elif packet_type == b'FIN':
                             self.send_FINACK()
