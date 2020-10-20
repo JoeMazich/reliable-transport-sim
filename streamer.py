@@ -115,6 +115,8 @@ class Streamer:
                 print('Sender')
                 self.resend(self.timer - 10)
                 miliseconds = 0
+            if self.FIN:
+                break
             check = self.timer
 
     def resend(self, packet_num: int) -> None:
