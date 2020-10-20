@@ -7,7 +7,20 @@ from time import sleep
 import time
 import hashlib
 
+WINDOW_SIZE = 40
+DATS_B4_ACK = 2
+
+MS_FOR_MAX_WINDOW = 25
+MS_FOR_SENDER = 30
+
 class Streamer:
+
+    global WINDOW_SIZE
+    global DATS_B4_ACK
+
+    global MS_FOR_MAX_WINDOW
+    global MS_FOR_SENDER
+
     def __init__(self, dst_ip, dst_port,
                  src_ip=INADDR_ANY, src_port=0):
         """Default values listen on all network interfaces, chooses a random source port,
@@ -17,7 +30,7 @@ class Streamer:
         self.dst_ip = dst_ip
         self.dst_port = dst_port
 
-        self.current_seq = -1 # The current packetnum to be sent and to be expected
+        self.current_seq = 0 # The current packetnum to be sent and to be expected
         self.last_ACK = -1 # The last packetnum that was acked
         self.sender_index = 0 # For labeling the packets to be sent
 
@@ -31,8 +44,16 @@ class Streamer:
         self.sending = False
         self.receiving = False
 
-        executor = futures.ThreadPoolExecutor(max_workers=1)
-        executor.submit(self.listen)
+        self.triple_ACK = 0
+        self.wait_to_send = 0
+
+        self.send_window = 0
+
+        self.timing = False
+        self.timer = 0
+
+        self.executor = futures.ThreadPoolExecutor(max_workers=2)
+        self.executor.submit(self.listen)
 
     def send(self, data_bytes: bytes) -> None:
 
@@ -41,81 +62,94 @@ class Streamer:
 
         self.sending = True
 
-        header_length = 10
-        max_packet_length = 1210 #idk how long the hash is so I'm just going to low ball it
+        header_length = 50
+        max_packet_length = 1472
 
         data_length = max_packet_length - header_length
 
-        total_to_send = 0
-        self.sender_index = self.current_seq + 1
         for data in self.break_string(data_bytes, data_length):
-            self.data_to_send[self.sender_index] = data
-            self.sender_index += 1
-            total_to_send += 1
+            sleep(0.05)
+            h = hashlib.md5()
 
-        for _ in range(total_to_send):
+            packet = (' DAT ' + str(self.current_seq) + '~').encode() + data
+            h.update(packet)
+            packet = h.hexdigest().encode() + packet
+            print("Sent: %s at %s" % (packet, self.millis()))
+            self.data_to_send[self.current_seq] = packet
+
+            self.socket.sendto(packet, (self.dst_ip, self.dst_port))
+            self.send_window += 1
+
+            if self.send_window > WINDOW_SIZE:
+                print("Window hit")
+
+            self.timing = True
+            self.executor.submit(self.sender)
+            self.timer = self.current_seq
+
+            miliseconds = 0
+            while self.send_window > WINDOW_SIZE:
+                self.send_window = self.current_seq - self.last_ACK
+                sleep(0.01)
+                miliseconds += 1
+                if miliseconds >= MS_FOR_MAX_WINDOW:
+                    self.resend(self.current_seq - WINDOW_SIZE)
+                    miliseconds = 0
+
+
 
             self.current_seq += 1
 
-            data = self.data_to_send[self.current_seq]
-            h = hashlib.md5()
-            h.update(str(self.current_seq).encode())
-            h.update(b" ")
-            h.update(data)
-
-            header = ('DAT ' + str(self.current_seq) + ' ' + h.hexdigest() + '~').encode()
-            packet = header + data
-
-            print("Sent: %s at %s" % (packet, self.millis()))
-
-            self.socket.sendto(packet, (self.dst_ip, self.dst_port))
-            self.wait_for_ACK(self.current_seq)
-
         self.sending = False
 
+    def sender(self):
+        check = self.timer
+        miliseconds = 0
+        while self.timing:
+            sleep(0.01)
+            if check == self.timer:
+                miliseconds += 1
+            else:
+                miliseconds = 0
+            if miliseconds >= MS_FOR_SENDER:
+                print('Sender')
+                self.resend(self.timer - 10)
+                miliseconds = 0
+            check = self.timer
+
     def resend(self, packet_num: int) -> None:
-        data = self.data_to_send[packet_num]
+        try:
+            packet = self.data_to_send[packet_num]
+        except Exception as e:
+            pass
+        else:
+            print("Resent: %s at %s" % (packet, self.millis()))
+            self.socket.sendto(packet, (self.dst_ip, self.dst_port))
+
+
+    def send_ACK(self, number: int) -> None:
         h = hashlib.md5()
-        h.update(str(self.current_seq).encode())
-        h.update(b" ")
-        h.update(data)
-
-        header = ('DAT ' + str(packet_num) + ' ' + h.hexdigest() + '~').encode()
-
-        packet = header + data
-
-        print("Resent: %s at %s" % (packet, self.millis()))
-
-        self.socket.sendto(packet, (self.dst_ip, self.dst_port))
-
-        self.wait_for_ACK(packet_num)
-
-    def send_ACK(self) -> None:
-        #print("SENDING ACK1")
-        h = hashlib.md5()
-        #print("SENDING ACK2")
-        h.update(str(self.current_seq).encode())
-        #print("SENDING ACK3")
-        acknowledgement = ('ACK ' + str(self.current_seq) + ' ' + h.hexdigest() + '~').encode()
+        acknowledgement = (' ACK ' + str(number) + '~').encode()
+        h.update(acknowledgement)
+        acknowledgement = h.hexdigest().encode() + acknowledgement
         print("Sent: %s at %s" % (acknowledgement, self.millis()))
         self.socket.sendto(acknowledgement, (self.dst_ip, self.dst_port))
 
     def send_FIN(self) -> None:
         h = hashlib.md5()
-        h.update(str(self.current_seq).encode())
-
-        finish = ('FIN ' + str(self.current_seq) + ' ' + h.hexdigest() + '~').encode()
+        finish = (' FIN ' + str(self.current_seq) + '~').encode()
+        h.update(finish)
+        finish = h.hexdigest().encode() + finish
         print("Sent: %s at %s" % (finish, self.millis()))
         self.socket.sendto(finish, (self.dst_ip, self.dst_port))
 
     def send_FINACK(self) -> None:
         h = hashlib.md5()
-        h.update(str(self.current_seq).encode())
-
-        finack = ('FINACK ' + str(self.current_seq) + ' ' + h.hexdigest() + '~').encode()
-        print("Sent: %s at %s" % (finack, self.millis()))
-        self.socket.sendto(finack, (self.dst_ip, self.dst_port))
-
+        finishack = (' FINACK ' + str(self.current_seq) + '~').encode()
+        h.update(finishack)
+        finishack = h.hexdigest().encode() + finishack
+        print("Sent: %s at %s" % (finishack, self.millis()))
+        self.socket.sendto(finishack, (self.dst_ip, self.dst_port))
 
     def recv(self) -> bytes:
 
@@ -123,21 +157,12 @@ class Streamer:
             sleep(0.01)
 
         self.receiving = True
-        got_data = False
 
         while True:
-            buffer = self.buffer.copy()
-
-            for seq_num in buffer:
-                if int(seq_num) < self.current_seq + 1:
-                    del self.buffer[seq_num]
-                elif int(seq_num) == self.current_seq + 1:
-                    #("BUFFER: ", buffer)
-                    data = self.buffer.pop(self.current_seq + 1)
-                    self.current_seq += 1
-                    got_data = True
-
-            if got_data:
+            if self.current_seq in self.buffer:
+                data = self.buffer.pop(self.current_seq)
+                self.last_ACK = self.current_seq - 1
+                self.current_seq += 1
                 break
 
         print("Retrieved: %s at %s" % (data, self.millis()))
@@ -149,84 +174,77 @@ class Streamer:
     def listen(self) -> None:
 
         while self.listening:
-            #print("STILL LISTENING")
             try:
-                packet, addr = self.socket.recvfrom()
+                totpacket, addr = self.socket.recvfrom()
 
             except Exception as e:
                 print("Listener died: " + str(e))
 
             else:
-                print("Got: %s at %s" % (packet, self.millis()))
-                packet_parts = packet.split(b'~', 1)
-                if len(packet_parts) != 2: #Corruption deleted the ~ char
-                    continue
-                header, data = packet_parts[0], packet_parts[1]
+                print("Got: %s at %s" % (totpacket, self.millis()))
+                h = hashlib.md5()
+
+                hash, packet = totpacket.split(b' ', 1)
+                h.update(b' ' + packet)
+                broke = False
 
                 try:
-                    header = header.decode() #Corruption caused decoding to throw a syntax error
-
-                except Exception:
-                    #print("SYNTAX ERROR OCCURED")
+                    if hash.decode() != h.hexdigest():
+                        broke = True
+                except Exception as e:
                     continue
-
                 else:
-                    header_parts = header.split()
-                    if len(header_parts) != 3: #Corruption added an extra space
-                        continue
-                    packet_type, seq_num, hash_value = header_parts[0], header_parts[1], header_parts[2]
-
-                    try:
+                    if not broke:
+                        header, data = packet.split(b'~')
+                        packet_type, seq_num = header.split(b' ')
                         seq_num = int(seq_num)
 
-                    except Exception: #Corruption caused chars to no longer be all numerical
-                        continue
+                        if packet_type == b'DAT':
 
-                    else:
-                        h = hashlib.md5()
+                            if seq_num == self.last_ACK + 1:
+                                self.buffer[seq_num] = data
+                                self.wait_to_send += 1
 
-                        if packet_type == 'DAT':
-                            h.update(str(seq_num).encode())
-                            h.update(b" ")
-                            h.update(data)
-                            #print("DIGEST: ", h.hexdigest())
-                            #print("HASH: ", hash_value)
-                            if h.hexdigest() == hash_value:
-                                #print("HASH TEST SUCCESS")
-                                self.send_ACK()
-                                #print("DATA PUT IN BUFFER: ", data)
-                                self.buffer[int(seq_num)] = data
-                        elif packet_type == 'ACK':
-                            h.update(str(seq_num).encode())
-                            #print("DIGEST: ", h.hexdigest())
-                            #print("HASH: ", hash_value)
-                            if h.hexdigest() == hash_value:
-                                if self.last_ACK < seq_num:
-                                    self.last_ACK = seq_num
-                        elif packet_type == 'FIN':
-                            h.update(str(seq_num).encode())
-                            #print("DIGEST: ", h.hexdigest())
-                            #print("HASH: ", hash_value)
-                            if h.hexdigest() == hash_value:
-                                self.FIN = True
-                        elif packet_type == 'FINACK':
-                            h.update(str(seq_num).encode())
-                            #print("DIGEST: ", h.hexdigest())
-                            #print("HASH: ", hash_value)
-                            if h.hexdigest() == hash_value:
-                                self.FIN = True
-                                self.FINACK = True
-                        #else:
-                            #print("CORRUPTION OCCURED BUT THAT'S OKAY")
+                                if self.wait_to_send >= DATS_B4_ACK:
+                                    self.send_ACK(self.last_ACK + 1)
+                                    self.wait_to_send = 0
+
+                                self.last_ACK += 1
+
+                            elif seq_num > self.last_ACK + 1:
+                                self.buffer[seq_num] = data
+                                self.wait_to_send += 1
+
+                                if self.wait_to_send >= 1:
+                                    self.send_ACK(self.last_ACK)
+                                    self.wait_to_send = 0
+
+                            else:
+                                self.wait_to_send += 1
+                                if self.wait_to_send >= DATS_B4_ACK:
+                                    self.send_ACK(self.last_ACK)
+                                    self.wait_to_send = 0
+
+                        elif packet_type == b'ACK':
+
+                            if seq_num > self.last_ACK:
+                                self.last_ACK = seq_num
+
+                            else:
+                                self.resend(seq_num + 1)
+
+                        elif packet_type == b'FIN':
+                            self.send_FINACK()
+                            self.FIN = True
+                        elif packet_type == b'FINACK':
+                            self.FINACK = True
+                            self.FIN = True
 
     def stop_listening(self) -> None:
         self.listening = False
         self.socket.stoprecv()
 
     def close(self) -> None:
-
-        print(self.sending)
-        print(self.receiving)
 
         while self.sending or self.receiving:
             sleep(0.01)
@@ -236,27 +254,23 @@ class Streamer:
         while not self.FIN:
             if (miliseconds % 50) == 49:
                 self.send_FIN()
-            if miliseconds >= 500:
+            sleep(0.01)
+            miliseconds += 1
+
+        self.send_FINACK()
+        miliseconds = 0
+        while not self.FINACK:
+            if (miliseconds % 50) == 49:
+                self.send_FINACK()
+            if miliseconds >= 250:
                  break
             sleep(0.01)
             miliseconds += 1
 
-        #self.send_FINACK()
-        #miliseconds = 0
-        #while not self.FINACK:
-            #if (miliseconds % 50) == 49:
-                #self.send_FINACK()
-            #if miliseconds >= 500:
-                #break
-            #sleep(0.01)
-            #miliseconds += 1
-
-
+        self.timing = False
         sleep(1)
 
         self.stop_listening()
-
-        sleep(10)
 
         self.data_to_send = {} # Buffer to send items
         self.buffer = {} # Buffer for recieved items
@@ -271,9 +285,6 @@ class Streamer:
         self.current_seq = -1 # The current packetnum to be sent and to be expected
         self.last_ACK = -1 # The last packetnum that was acked
         self.sender_index = 0 # For labeling the packets to be sent
-
-        sleep(5)
-
 
     def parse_packet(self, packet: bytes) -> None:
         pass
