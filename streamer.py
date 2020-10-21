@@ -10,7 +10,6 @@ import hashlib
 WINDOW_SIZE = 40
 DATS_B4_ACK = 2
 
-MS_FOR_MAX_WINDOW = 25
 MS_FOR_SENDER = 30
 
 class Streamer:
@@ -18,7 +17,6 @@ class Streamer:
     global WINDOW_SIZE
     global DATS_B4_ACK
 
-    global MS_FOR_MAX_WINDOW
     global MS_FOR_SENDER
 
     def __init__(self, dst_ip, dst_port,
@@ -44,18 +42,16 @@ class Streamer:
         self.sending = False
         self.receiving = False
 
-        self.triple_ACK = 0
         self.wait_to_send = 0
 
+        self.last_sent = 0
         self.send_window = 0
 
-        self.triple_ACK = 0
+        self.timing = True
 
-        self.timing = False
-        self.timer = 0
-
-        self.executor = futures.ThreadPoolExecutor(max_workers=2)
-        self.executor.submit(self.listen)
+        executor = futures.ThreadPoolExecutor(max_workers=2)
+        executor.submit(self.listen)
+        executor.submit(self.sender)
 
     def send(self, data_bytes: bytes) -> None:
 
@@ -76,53 +72,35 @@ class Streamer:
             packet = (' DAT ' + str(self.current_seq) + '~').encode() + data
             h.update(packet)
             packet = h.hexdigest().encode() + packet
-            #print("Sent: %s at %s" % (packet, self.millis()))
+            print("Sent: %s at %s" % (packet, self.millis()))
             self.data_to_send[self.current_seq] = packet
 
             self.socket.sendto(packet, (self.dst_ip, self.dst_port))
             self.send_window += 1
 
             if self.send_window > WINDOW_SIZE:
-                #print("Window hit")
-                pass
+                self.last_sent = self.current_seq - WINDOW_SIZE
 
-            self.timing = True
-            self.executor.submit(self.sender)
-            self.timer = self.current_seq
-
-            miliseconds = 0
             while self.send_window > WINDOW_SIZE:
                 self.send_window = self.current_seq - self.last_ACK
-                sleep(0.01)
-                miliseconds += 1
-                if miliseconds >= MS_FOR_MAX_WINDOW:
-                    self.resend(self.current_seq - WINDOW_SIZE)
-                    miliseconds = 0
 
             self.current_seq += 1
 
         self.sending = False
 
-    def sender(self):
-        check = self.timer
-        miliseconds = 0
+    def sender(self) -> None:
+        ms = 0
         while self.timing:
-            sleep(0.01)
-            if check == self.timer:
-                miliseconds += 1
-            else:
-                miliseconds = 0
-            if miliseconds >= MS_FOR_SENDER:
-                #print("SEQ NUM: ", self.timer - 10)
-                #print("LAST ACK: ", self.last_ACK)
-                if self.timer - 10 > self.last_ACK:
-                    self.resend(self.timer - 10)
-                else:
-                    self.timer += 1
-                miliseconds = 0
-            if self.FIN:
+            if self.last_sent > self.last_ACK:
+                sleep(0.01)
+                ms += 1
+                if ms >= MS_FOR_SENDER:
+                    self.resend(self.last_sent)
+                    ms = 0
+            elif self.last_sent <= self.last_ACK:
+                self.last_sent = self.last_ACK + 1
+            if self.FINACK:
                 break
-            check = self.timer
 
     def resend(self, packet_num: int) -> None:
         try:
@@ -130,7 +108,7 @@ class Streamer:
         except Exception as e:
             pass
         else:
-            #print("Resent: %s at %s" % (packet, self.millis()))
+            print("Resent: %s at %s" % (packet, self.millis()))
             self.socket.sendto(packet, (self.dst_ip, self.dst_port))
 
 
@@ -139,7 +117,7 @@ class Streamer:
         acknowledgement = (' ACK ' + str(number) + '~').encode()
         h.update(acknowledgement)
         acknowledgement = h.hexdigest().encode() + acknowledgement
-        #print("Sent: %s at %s" % (acknowledgement, self.millis()))
+        print("Sent: %s at %s" % (acknowledgement, self.millis()))
         self.socket.sendto(acknowledgement, (self.dst_ip, self.dst_port))
 
     def send_FIN(self) -> None:
@@ -147,7 +125,7 @@ class Streamer:
         finish = (' FIN ' + str(self.current_seq) + '~').encode()
         h.update(finish)
         finish = h.hexdigest().encode() + finish
-        #print("Sent: %s at %s" % (finish, self.millis()))
+        print("Sent: %s at %s" % (finish, self.millis()))
         self.socket.sendto(finish, (self.dst_ip, self.dst_port))
 
     def send_FINACK(self) -> None:
@@ -155,7 +133,7 @@ class Streamer:
         finishack = (' FINACK ' + str(self.current_seq) + '~').encode()
         h.update(finishack)
         finishack = h.hexdigest().encode() + finishack
-        #print("Sent: %s at %s" % (finishack, self.millis()))
+        print("Sent: %s at %s" % (finishack, self.millis()))
         self.socket.sendto(finishack, (self.dst_ip, self.dst_port))
 
     def recv(self) -> bytes:
@@ -172,15 +150,15 @@ class Streamer:
                 self.current_seq += 1
                 break
 
-        #print("Retrieved: %s at %s" % (data, self.millis()))
+        print("Retrieved: %s at %s" % (data, self.millis()))
 
         self.receiving = False
 
         return data
 
     def listen(self) -> None:
-
         while self.listening:
+
             try:
                 totpacket, addr = self.socket.recvfrom()
 
@@ -188,7 +166,7 @@ class Streamer:
                 print("Listener died: " + str(e))
 
             else:
-                #print("Got: %s at %s" % (totpacket, self.millis()))
+                print("Got: %s at %s" % (totpacket, self.millis()))
                 h = hashlib.md5()
 
                 hash, packet = totpacket.split(b' ', 1)
@@ -207,30 +185,18 @@ class Streamer:
                         seq_num = int(seq_num)
 
                         if packet_type == b'DAT':
+                            self.wait_to_send += 1
 
                             if seq_num == self.last_ACK + 1:
                                 self.buffer[seq_num] = data
-                                self.wait_to_send += 1
-
-                                if self.wait_to_send >= DATS_B4_ACK:
-                                    self.send_ACK(self.last_ACK + 1)
-                                    self.wait_to_send = 0
-
                                 self.last_ACK += 1
 
                             elif seq_num > self.last_ACK + 1:
                                 self.buffer[seq_num] = data
-                                self.wait_to_send += 1
 
-                                if self.wait_to_send >= DATS_B4_ACK:
-                                    self.send_ACK(self.last_ACK)
-                                    self.wait_to_send = 0
-
-                            else:
-                                self.wait_to_send += 1
-                                if self.wait_to_send >= DATS_B4_ACK:
-                                    self.send_ACK(self.last_ACK)
-                                    self.wait_to_send = 0
+                            if self.wait_to_send >= DATS_B4_ACK:
+                                self.send_ACK(self.last_ACK)
+                                self.wait_to_send = 0
 
                         elif packet_type == b'ACK':
 
@@ -238,17 +204,14 @@ class Streamer:
                                 self.last_ACK = seq_num
 
                             else:
-                                self.resend(seq_num + 1)
-                                '''self.triple_ACK += 1
-                                if self.triple_ACK >= 3:
-                                    self.resend(seq_num + 1)'''
+                                pass
 
                         elif packet_type == b'FIN':
-                            self.send_FINACK()
                             self.FIN = True
+
                         elif packet_type == b'FINACK':
-                            self.FINACK = True
                             self.FIN = True
+                            self.FINACK = True
 
     def stop_listening(self) -> None:
         self.listening = False
@@ -281,8 +244,6 @@ class Streamer:
         sleep(1)
 
         self.stop_listening()
-
-        #sleep(2)
 
         self.data_to_send = {} # Buffer to send items
         self.buffer = {} # Buffer for recieved items
