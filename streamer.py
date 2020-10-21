@@ -113,7 +113,12 @@ class Streamer:
             else:
                 miliseconds = 0
             if miliseconds >= MS_FOR_SENDER:
-                self.resend(self.timer - 10)
+                #print("SEQ NUM: ", self.timer - 10)
+                #print("LAST ACK: ", self.last_ACK)
+                if self.timer - 10 > self.last_ACK:
+                    self.resend(self.timer - 10)
+                else:
+                    self.timer += 1
                 miliseconds = 0
             if self.FIN:
                 break
