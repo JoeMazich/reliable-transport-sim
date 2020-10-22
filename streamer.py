@@ -72,7 +72,7 @@ class Streamer:
             packet = (' DAT ' + str(self.current_seq) + '~').encode() + data
             h.update(packet)
             packet = h.hexdigest().encode() + packet
-            print("Sent: %s at %s" % (packet, self.millis()))
+            #print("Sent: %s at %s" % (packet, self.millis()))
             self.data_to_send[self.current_seq] = packet
 
             self.socket.sendto(packet, (self.dst_ip, self.dst_port))
@@ -108,7 +108,7 @@ class Streamer:
         except Exception as e:
             pass
         else:
-            print("Resent: %s at %s" % (packet, self.millis()))
+            #print("Resent: %s at %s" % (packet, self.millis()))
             self.socket.sendto(packet, (self.dst_ip, self.dst_port))
 
 
@@ -117,7 +117,7 @@ class Streamer:
         acknowledgement = (' ACK ' + str(number) + '~').encode()
         h.update(acknowledgement)
         acknowledgement = h.hexdigest().encode() + acknowledgement
-        print("Sent: %s at %s" % (acknowledgement, self.millis()))
+        #print("Sent: %s at %s" % (acknowledgement, self.millis()))
         self.socket.sendto(acknowledgement, (self.dst_ip, self.dst_port))
 
     def send_FIN(self) -> None:
@@ -125,7 +125,7 @@ class Streamer:
         finish = (' FIN ' + str(self.current_seq) + '~').encode()
         h.update(finish)
         finish = h.hexdigest().encode() + finish
-        print("Sent: %s at %s" % (finish, self.millis()))
+        #print("Sent: %s at %s" % (finish, self.millis()))
         self.socket.sendto(finish, (self.dst_ip, self.dst_port))
 
     def send_FINACK(self) -> None:
@@ -133,7 +133,7 @@ class Streamer:
         finishack = (' FINACK ' + str(self.current_seq) + '~').encode()
         h.update(finishack)
         finishack = h.hexdigest().encode() + finishack
-        print("Sent: %s at %s" % (finishack, self.millis()))
+        #print("Sent: %s at %s" % (finishack, self.millis()))
         self.socket.sendto(finishack, (self.dst_ip, self.dst_port))
 
     def recv(self) -> bytes:
@@ -150,7 +150,7 @@ class Streamer:
                 self.current_seq += 1
                 break
 
-        print("Retrieved: %s at %s" % (data, self.millis()))
+        #print("Retrieved: %s at %s" % (data, self.millis()))
 
         self.receiving = False
 
@@ -166,7 +166,7 @@ class Streamer:
                 print("Listener died: " + str(e))
 
             else:
-                print("Got: %s at %s" % (totpacket, self.millis()))
+                #print("Got: %s at %s" % (totpacket, self.millis()))
                 h = hashlib.md5()
 
                 hash, packet = totpacket.split(b' ', 1)
